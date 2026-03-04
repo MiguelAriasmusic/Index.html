@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WhatsApp P2P Online</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { --wa-bg: #0b141a; --wa-panel: #202c33; --wa-sent: #005c4b; --wa-received: #202c33; }
+        body { background-color: #111b21; color: #e9edef; font-family: 'Segoe UI', sans-serif; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        #chat-screen {
+            background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
+            background-blend-mode: overlay; background-color: var(--wa-bg); flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 4px;
+        }
+        .bubble { position: relative; padding: 6px 10px; max-width: 85%; font-size: 14px; box-shadow: 0 1px 1px rgba(0,0,0,0.2); margin: 2px 0; }
+        .bubble-in { background: var(--wa-received); align-self: flex-start; border-radius: 0 8px 8px 8px; }
+        .bubble-out { background: var(--wa-sent); align-self: flex-end; border-radius: 8px 0 8px 8px; }
+        .hidden { display: none !important; }
+        video { transform: scaleX(-1); object-fit: cover; border-radius: 12px; background: #000; }
+        .ping-anim { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <audio id="ping-sound" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3"></audio>
+
+    <div id="view-login" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#111b21] p-6">
+        <div class="mb-6 text-[#00a884]"><svg viewBox="0 0 24 24" width="70" height="70" fill="currentColor"><path d="M12.004 2c-5.517 0-9.992 4.476-9.992 9.991 0 1.758.459 3.409 1.264 4.843L2.004 22l5.304-1.393a9.925 9.925 0 004.696 1.177c5.517 0 9.992-4.476 9.992-9.992S17.52 2 12.004 2z"/></svg></div>
+        <div class="w-full max-w-xs space-y-4">
+            <h1 class="text-center text-xl font-light text-gray-400">Messenger P2P Online</h1>
+            <input type="text" id="my-user" placeholder="Crea tu usuario (ej: alex7)" class="w-full bg-[#2a3942] p-3 rounded-lg outline-none border-b-2 border-transparent focus:border-[#00a884] transition-all">
+            <input type="password" id="my-pass" placeholder="Contraseña del sistema" class="w-full bg-[#2a3942] p-3 rounded-lg outline-none border-b-2 border-transparent focus:border-[#00a884]">
+            <button onclick="auth()" class="w-full bg-[#00a884] text-[#111b21] py-3 rounded-lg font-bold hover:bg-[#06cf9c] active:scale-95 transition">INGRESAR</button>
+        </div>
+    </div>
+
+    <div id="view-app" class="hidden flex flex-col h-full">
+        <header class="h-14 bg-[#202c33] flex items-center justify-between px-3 shadow-lg relative z-20">
+            <div class="flex items-center gap-3">
+                <div id="status-dot" class="w-2.5 h-2.5 bg-red-500 rounded-full ping-anim"></div>
+                <div>
+                    <h2 id="contact-name" class="font-bold text-sm leading-tight text-white">Desconectado</h2>
+                    <p id="contact-status" class="text-[10px] text-gray-400 uppercase tracking-tighter">Esperando conexión...</p>
+                </div>
+            </div>
+            <div class="flex gap-4 text-gray-400">
+                <button onclick="startCall()" class="hover:text-white transition">📹</button>
+                <button onclick="location.reload()" class="hover:text-red-400">✕</button>
+            </div>
+        </header>
+
+        <div class="bg-[#111b21] p-2 flex gap-2 border-b border-[#2a3942]">
+            <input type="text" id="peer-target" placeholder="Escribe el usuario de tu amigo..." class="flex-1 bg-[#202c33] rounded-full px-4 py-1.5 text-xs outline-none focus:ring-1 ring-[#00a884]">
+            <button onclick="connect()" class="bg-[#00a884] px-4 py-1.5 rounded-full text-[10px] text-[#111b21] font-black uppercase tracking-widest">Conectar</button>
+        </div>
+
+        <div id="chat-screen"></div>
+
+        <div id="video-overlay" class="hidden absolute top-16 right-4 w-32 h-44 z-50">
+            <video id="remote-v" autoplay class="w-full h-full shadow-2xl border-2 border-[#00a884]"></video>
+            <video id="local-v" autoplay muted class="absolute bottom-1 right-1 w-10 h-14 border border-white shadow-lg"></video>
+            <button onclick="endCall()" class="absolute -top-2 -right-2 bg-red-500 rounded-full w-6 h-6 flex items-center justify-center text-[10px]">✕</button>
+        </div>
+
+        <footer class="bg-[#202c33] p-2 flex items-center gap-2 relative z-20">
+            <label class="p-2 cursor-pointer text-gray-400 hover:text-white">
+                📎<input type="file" id="f-input" class="hidden" onchange="handleFile()">
+            </label>
+            <input type="text" id="msg-input" placeholder="Escribe un mensaje" class="flex-1 bg-[#2a3942] py-2 px-4 rounded-full outline-none text-sm">
+            <button onclick="sendMsg()" class="p-2 text-[#00a884] hover:scale-110 transition">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M1.101 21.757L23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z"/></svg>
+            </button>
+        </footer>
+    </div>
+
+    <script>
+        const PASS = "1234"; // Cambia tu contraseña aquí
+        let peer, conn, myUser;
+        const ping = document.getElementById('ping-sound');
+
+        function auth() {
+            myUser = document.getElementById('my-user').value.trim().toLowerCase();
+            if(myUser && document.getElementById('my-pass').value === PASS) {
+                document.getElementById('view-login').classList.add('hidden');
+                document.getElementById('view-app').classList.remove('hidden');
+                initPeer();
+            } else { alert("Datos incorrectos"); }
+        }
+
+        function initPeer() {
+            peer = new Peer(myUser);
+            peer.on('open', () => {
+                document.getElementById('status-dot').className = "w-2.5 h-2.5 bg-green-500 rounded-full";
+                document.getElementById('contact-name').innerText = "Yo: " + myUser;
+            });
+
+            peer.on('connection', c => { conn = c; setupConn(); });
+            peer.on('call', call => {
+                if(confirm("Llamada entrante de " + call.peer)) {
+                    navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(s => {
+                        document.getElementById('video-overlay').classList.remove('hidden');
+                        document.getElementById('local-v').srcObject = s;
+                        call.answer(s);
+                        call.on('stream', rs => document.getElementById('remote-v').srcObject = rs);
+                    });
+                }
+            });
+        }
+
+        function connect() {
+            const t = document.getElementById('peer-target').value.trim().toLowerCase();
+            if(t && t !== myUser) { conn = peer.connect(t); setupConn(); }
+        }
+
+        function setupConn() {
+            conn.on('open', () => {
+                document.getElementById('contact-name').innerText = conn.peer;
+                document.getElementById('contact-status').innerText = "Online";
+                ping.play();
+            });
+            conn.on('data', data => {
+                if(data.type === 'text') { renderMsg(data.content, 'in'); ping.play(); }
+                if(data.type === 'file') { renderFile(data, 'in'); ping.play(); }
+            });
+        }
+
+        function sendMsg() {
+            const i = document.getElementById('msg-input');
+            if(conn && i.value) {
+                conn.send({type:'text', content: i.value});
+                renderMsg(i.value, 'out');
+                i.value = "";
+            }
+        }
+
+        function renderMsg(txt, dir) {
+            const b = document.getElementById('chat-screen');
+            const d = document.createElement('div');
+            d.className = `bubble bubble-${dir}`;
+            const t = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            d.innerHTML = `<div>${txt}</div><div class="text-[9px] text-gray-400 text-right mt-1">${t} ${dir==='out'?'✓✓':''}</div>`;
+            b.appendChild(d);
+            b.scrollTop = b.scrollHeight;
+        }
+
+        function handleFile() {
+            const f = document.getElementById('f-input').files[0];
+            if(conn && f) {
+                conn.send({type:'file', file: f, name: f.name, mime: f.type});
+                renderMsg("📎 " + f.name, 'out');
+            }
+        }
+
+        function renderFile(data, dir) {
+            const b = new Blob([data.file], {type: data.mime});
+            const u = URL.createObjectURL(b);
+            renderMsg(`📄 <a href="${u}" download="${data.name}" class="text-blue-400 underline">${data.name}</a>`, dir);
+        }
+
+        function startCall() {
+            const t = document.getElementById('peer-target').value.toLowerCase();
+            navigator.mediaDevices.getUserMedia({video:true, audio:true}).then(s => {
+                document.getElementById('video-overlay').classList.remove('hidden');
+                document.getElementById('local-v').srcObject = s;
+                const call = peer.call(t, s);
+                call.on('stream', rs => document.getElementById('remote-v').srcObject = rs);
+            });
+        }
+
+        document.getElementById('msg-input').onkeypress = e => { if(e.key==='Enter') sendMsg(); };
+    </script>
+</body>
+</html>
